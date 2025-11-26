@@ -33,7 +33,8 @@ def clean_old_readings():
         cursor = conn.cursor(dictionary=True)
 
         # calculate cutoff datetime
-        cutoff_date = datetime.now() - timedelta(days=15)
+        # cutoff_date = datetime.now() - timedelta(days=15)
+        cutoff_date = datetime.now() - timedelta(days=3)
         print("📅 Deleting records older than:", cutoff_date.strftime("%Y-%m-%d %H:%M:%S"))
 
         # count old records before delete
@@ -87,3 +88,4 @@ if __name__ == "__main__":
     # keep the script alive (in case running standalone)
     while True:
         time.sleep(60)
+
