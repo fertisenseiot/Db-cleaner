@@ -5,10 +5,10 @@ from threading import Thread
 
 # ================== CONFIG ==================
 db_config = {
-    "host": "switchback.proxy.rlwy.net",
+    "host": "switchyard.proxy.rlwy.net",
     "user": "root",
-    "port": 44750,
-    "password": "qYxlhEiaEvtiRvKaFyigDPtXSSCpddMv",
+    "port": 28085,
+    "password": "NOtYUNawwodSrBfGubHhwKaFtWyGXQct",
     "database": "railway",
 }
 
@@ -88,6 +88,7 @@ if __name__ == "__main__":
     # keep the script alive (in case running standalone)
     while True:
         time.sleep(60)
+
 
 
 
