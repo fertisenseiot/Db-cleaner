@@ -2,6 +2,8 @@ import mysql.connector
 from datetime import datetime, timedelta
 import time
 from threading import Thread
+import os
+import sys
 
 # ================== CONFIG ==================
 db_config = {
@@ -32,12 +34,9 @@ def clean_old_readings():
         conn = get_connection()
         cursor = conn.cursor(dictionary=True)
 
-        # calculate cutoff datetime
-        # cutoff_date = datetime.now() - timedelta(days=15)
         cutoff_date = datetime.now() - timedelta(days=3)
         print("📅 Deleting records older than:", cutoff_date.strftime("%Y-%m-%d %H:%M:%S"))
 
-        # count old records before delete
         cursor.execute("""
             SELECT COUNT(*) AS cnt
             FROM device_reading_log
@@ -73,7 +72,7 @@ def start_cleanup_scheduler():
         while True:
             clean_old_readings()
             print("⏳ Next cleanup in 24 hours...")
-            time.sleep(24 * 60 * 60)  # 24 hours
+            time.sleep(24 * 60 * 60)
 
     t = Thread(target=scheduler, daemon=True)
     t.start()
@@ -82,14 +81,17 @@ def start_cleanup_scheduler():
 # ================== MAIN ==================
 if __name__ == "__main__":
     print("🟢 Cleanup script started")
+
+    # Run cleanup once (cron-safe)
     clean_old_readings()
-    start_cleanup_scheduler()
 
-    # keep the script alive (in case running standalone)
-    while True:
-        time.sleep(60)
+    # If explicitly running in standalone/VM mode, enable scheduler
+    if os.getenv("ENABLE_INTERNAL_SCHEDULER") == "true":
+        start_cleanup_scheduler()
 
+        # keep the script alive only in this mode
+        while True:
+            time.sleep(60)
 
-
-
-
+    print("🔴 Cleanup finished, exiting process")
+    sys.exit(0)
