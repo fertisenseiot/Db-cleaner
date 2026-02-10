@@ -4,13 +4,26 @@ import time
 from threading import Thread
 import os
 import sys
+import pandas as pd
+import pytz
+import smtplib
+from email.message import EmailMessage
+
+
+# ========== TEST FILTER ==========
+REPORT_ONLY = True
+TEST_USER_ID = 2   # <-- sirf testing ke liye
+
+
+# =============== TIMEZONE =============
+IST = pytz.timezone("Asia/Kolkata")
 
 # ================== CONFIG ==================
 db_config = {
     "host": "switchyard.proxy.rlwy.net",
     "user": "root",
     "port": 28085,
-    "password": "NOtYUNawwodSrBfGubHhwKaFtWyGXQct",
+    "password": os.getenv("DB_PASSWORD"),
     "database": "railway",
 }
 
@@ -33,8 +46,9 @@ def clean_old_readings():
     try:
         conn = get_connection()
         cursor = conn.cursor(dictionary=True)
-
-        cutoff_date = datetime.now() - timedelta(days=3)
+        
+        
+        cutoff_date = datetime.now(IST) - timedelta(days=3)
         print("📅 Deleting records older than:", cutoff_date.strftime("%Y-%m-%d %H:%M:%S"))
 
         cursor.execute("""
@@ -70,7 +84,7 @@ def start_cleanup_scheduler():
     """
     def scheduler():
         while True:
-            clean_old_readings()
+            # clean_old_readings()
             print("⏳ Next cleanup in 24 hours...")
             time.sleep(24 * 60 * 60)
 
@@ -78,12 +92,275 @@ def start_cleanup_scheduler():
     t.start()
     print("🚀 Cleanup scheduler started (every 24 hours)")
 
+
+  #==================Log insert / Update ===============
+def log_email_report(
+    user_id,
+    record_selection_date,
+    sent_status,
+    sent_dt=None,
+    sent_tm=None
+):
+    conn = get_connection()
+    cursor = conn.cursor()
+
+    cursor.execute("""
+        INSERT INTO email_report_log
+        (USER_ID, RECORD_SELECTION_DATE, EMAIL_SENT_STATUS,
+         EMAIL_SENT_DATE, EMAIL_SENT_TIME)
+        VALUES (%s, %s, %s, %s, %s)
+        ON DUPLICATE KEY UPDATE
+            EMAIL_SENT_STATUS = VALUES(EMAIL_SENT_STATUS),
+            EMAIL_SENT_DATE = VALUES(EMAIL_SENT_DATE),
+            EMAIL_SENT_TIME = VALUES(EMAIL_SENT_TIME)
+    """, (
+        user_id,
+        record_selection_date,
+        sent_status,
+        sent_dt,
+        sent_tm
+    ))
+
+    conn.commit()
+    cursor.close()
+    conn.close()
+
+
+
+  # ================== fetching Users ================== 
+def get_active_users():
+    conn = get_connection()
+    cursor = conn.cursor(dictionary=True)
+
+    query = """
+        SELECT USER_ID, ACTUAL_NAME, EMAIL
+        FROM master_user
+        WHERE SEND_EMAIL = 1
+          AND EMAIL IS NOT NULL
+    """
+
+    params = []
+
+    if TEST_USER_ID is not None:
+        query += " AND USER_ID = %s"
+        params.append(TEST_USER_ID)
+
+    cursor.execute(query, params)
+
+    users = cursor.fetchall()
+    conn.close()
+    return users
+
+ # ================== User Org & Centre Link ================== 
+def get_user_org_centres(user_id):
+    conn = get_connection()
+    cursor = conn.cursor(dictionary=True)
+
+    cursor.execute("""
+        SELECT ORGANIZATION_ID_id AS organization_id,
+               CENTRE_ID_id AS centre_id
+        FROM userorganizationcentrelink
+        WHERE USER_ID_id = %s
+    """, (user_id,))
+
+    rows = cursor.fetchall()
+    conn.close()
+    return rows
+
+ # ================== User Link Devices ================== 
+def get_devices_for_user(user_id):
+    org_centres = get_user_org_centres(user_id)
+
+    if not org_centres:
+        return []
+
+    conn = get_connection()
+    cursor = conn.cursor(dictionary=True)
+
+    devices = set()
+
+    for oc in org_centres:
+        cursor.execute("""
+            SELECT DISTINCT DEVICE_ID
+            FROM device_reading_log
+            WHERE ORGANIZATION_ID = %s
+              AND CENTRE_ID = %s
+        """, (oc["organization_id"], oc["centre_id"]))
+
+        for row in cursor.fetchall():
+            devices.add(row["DEVICE_ID"])
+
+    conn.close()
+    return list(devices)
+
+ # ================== Excel Generation (24h) ================== 
+
+def generate_user_excel(user):
+    devices = get_devices_for_user(user["USER_ID"])
+
+    if not devices:
+        return None
+
+    now = datetime.now(IST)
+    start_time = now - timedelta(hours=24)
+
+    filename = (
+        f"Reading_Report_{user['ACTUAL_NAME']}_" 
+        f"{now.strftime('%Y-%m-%d_%H%M%S')}.xlsx"
+    )
+
+    writer = pd.ExcelWriter(filename, engine="openpyxl")
+    conn = get_connection()
+
+    for device_id in devices:
+        query = """
+            SELECT
+                d.DEVICE_NAME           AS Device,
+                o.ORGANIZATION_NAME     AS Organization,
+                c.CENTRE_NAME           AS Centre,
+                s.SENSOR_NAME           AS Sensor,
+                p.PARAMETER_NAME        AS Parameter,
+                r.READING               AS Reading,
+                r.READING_DATE          AS Date,
+                r.READING_TIME          AS Time
+            FROM device_reading_log r
+            JOIN iot_api_masterdevice d
+                ON d.DEVICE_ID = r.DEVICE_ID
+            JOIN iot_api_masterorganization o
+                ON o.ORGANIZATION_ID = r.ORGANIZATION_ID
+            JOIN iot_api_mastercentre c
+                ON c.CENTRE_ID = r.CENTRE_ID
+            JOIN iot_api_mastersensor s
+                ON s.SENSOR_ID = r.SENSOR_ID
+            JOIN iot_api_masterparameter p
+                ON p.PARAMETER_ID = r.PARAMETER_ID
+            WHERE r.DEVICE_ID = %s
+            AND TIMESTAMP(r.READING_DATE, r.READING_TIME)
+            >= DATE_SUB(CURDATE(), INTERVAL 1 DAY)
+            AND TIMESTAMP(r.READING_DATE, r.READING_TIME) < CURDATE()
+            ORDER BY r.READING_DATE, r.READING_TIME;
+
+
+        """
+
+        # df = pd.read_sql(query, conn, params=(device_id, start_time))
+        df = pd.read_sql(query, conn, params=(device_id,))
+
+
+                    # Date ko readable format me lao
+        df["Date"] = pd.to_datetime(df["Date"]).dt.strftime("%d-%m-%Y")
+
+            # Time ko string bana do (sabse important)
+        # Time se days hata ke sirf HH:MM:SS rakho
+        df["Time"] = pd.to_timedelta(df["Time"]).astype(str).str.split().str[-1]
+
+        # print(df[["Date", "Time"]].head())
+
+
+
+        if not df.empty:
+            df.to_excel(
+                writer,
+                sheet_name = str(df["Device"].iloc[0])[:31],
+                index=False
+            )
+
+            # 🛑 QUICK SAFETY: agar ek bhi sheet nahi bani
+    if not writer.sheets:
+        writer.close()
+        conn.close()
+        os.remove(filename)
+        return None
+
+
+    writer.close()
+    conn.close()
+    return filename
+
+ # ================== BREVO Mail Sender ================== 
+def send_email_brevo(to_email, username, excel_file):
+    msg = EmailMessage()
+    msg["From"] = f"FertiSense IoT <{os.getenv('MAIL_FROM')}>"
+    msg["To"] = to_email
+    msg["Subject"] = "📊 Device Reading Report (Last 24 Hours)"
+
+    msg.set_content(
+        f"Hello {username},\n\n"
+        "Please find attached your device reading report for the last 24 hours.\n\n"
+        "Regards,\nFertiSense IoT System"
+    )
+
+    with open(excel_file, "rb") as f:
+        msg.add_attachment(
+            f.read(),
+            maintype="application",
+            subtype="vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            filename=excel_file
+        )
+
+    server = smtplib.SMTP("smtp-relay.brevo.com", 587)
+    server.starttls()
+    server.login("apikey", os.getenv("BREVO_SMTP_KEY"))
+    server.send_message(msg)
+    server.quit()
+
+ # ================== Cron  ================== 
+def send_reports_to_all_users():
+    print("📨 Sending 24h reports to users...")
+
+    users = get_active_users()
+
+    for user in users:
+        excel = generate_user_excel(user)
+
+        record_selection_date = (datetime.now(IST) - timedelta(days=1)).date()
+        now_dt = datetime.now(IST)
+
+        if excel:
+            print("📄 Excel generated at:", excel)
+
+            # 🔔 Yaha email bhejna hoga (jab enable karoge)
+            # send_email_brevo(...)
+
+              # 🔥 MULTIPLE EMAIL SUPPORT (YAHI ADD KIYA HAI)
+            emails = [e.strip() for e in user["EMAIL"].split(",") if e.strip()]
+
+            for email in emails:
+                send_email_brevo(
+                    to_email=email,
+                    username=user["ACTUAL_NAME"],
+                    excel_file=excel
+                )
+
+            # ✅ SUCCESS LOG
+            log_email_report(
+                user_id=user["USER_ID"],
+                record_selection_date=record_selection_date,
+                sent_status=True,
+                sent_dt=now_dt.date(),
+                sent_tm=now_dt.time().replace(microsecond=0)
+            )
+
+            # os.remove(excel)
+
+        else:
+            # ❌ FAIL LOG (no data / excel nahi bana)
+            log_email_report(
+                user_id=user["USER_ID"],
+                record_selection_date=record_selection_date,
+                sent_status=False
+            )
+
+
 # ================== MAIN ==================
 if __name__ == "__main__":
     print("🟢 Cleanup script started")
 
     # Run cleanup once (cron-safe)
+    send_reports_to_all_users()
     clean_old_readings()
+   
+
 
     # If explicitly running in standalone/VM mode, enable scheduler
     if os.getenv("ENABLE_INTERNAL_SCHEDULER") == "true":
