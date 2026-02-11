@@ -6,8 +6,10 @@ import os
 import sys
 import pandas as pd
 import pytz
-import smtplib
-from email.message import EmailMessage
+import sib_api_v3_sdk
+from sib_api_v3_sdk.rest import ApiException
+import base64
+
 
 
 # ========== TEST FILTER ==========
@@ -23,7 +25,7 @@ db_config = {
     "host": "switchyard.proxy.rlwy.net",
     "user": "root",
     "port": 28085,
-    "password": "NOtYUNawwodSrBfGubHhwKaFtWyGXQct",
+    "password": os.getenv("DB_PASSWORD"),
     "database": "railway",
 }
 
@@ -279,30 +281,64 @@ def generate_user_excel(user):
 
  # ================== BREVO Mail Sender ================== 
 def send_email_brevo(to_email, username, excel_file):
-    msg = EmailMessage()
-    msg["From"] = f"FertiSense IoT <{os.getenv('MAIL_FROM')}>"
-    msg["To"] = to_email
-    msg["Subject"] = "📊 Device Reading Report (Last 24 Hours)"
 
-    msg.set_content(
-        f"Hello {username},\n\n"
-        "Please find attached your device reading report for the last 24 hours.\n\n"
-        "Regards,\nFertiSense IoT System"
-    )
+    print(f"📧 Sending email to {to_email}")
 
-    with open(excel_file, "rb") as f:
-        msg.add_attachment(
-            f.read(),
-            maintype="application",
-            subtype="vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            filename=excel_file
+    # 🔎 DEBUG CHECK (temporary)
+    print("MAIL_FROM:", os.getenv("MAIL_FROM"))
+    print("BREVO KEY:", os.getenv("BREVO_API_KEY"))
+
+    BREVO_API_KEY = os.getenv("BREVO_API_KEY")
+
+    if not BREVO_API_KEY:
+        print("❌ BREVO_API_KEY not found in environment variables!")
+        return
+
+    try:
+        import sib_api_v3_sdk
+        from sib_api_v3_sdk.rest import ApiException
+        import base64
+
+        configuration = sib_api_v3_sdk.Configuration()
+        configuration.api_key['api-key'] = BREVO_API_KEY
+
+        api_instance = sib_api_v3_sdk.TransactionalEmailsApi(
+            sib_api_v3_sdk.ApiClient(configuration)
         )
 
-    server = smtplib.SMTP("smtp-relay.brevo.com", 587)
-    server.starttls()
-    server.login("apikey", os.getenv("BREVO_SMTP_KEY"))
-    server.send_message(msg)
-    server.quit()
+        # Excel file ko base64 me convert karo
+        with open(excel_file, "rb") as f:
+            encoded_file = base64.b64encode(f.read()).decode()
+
+        attachment = [{
+            "content": encoded_file,
+            "name": excel_file
+        }]
+
+        email = sib_api_v3_sdk.SendSmtpEmail(
+            to=[{"email": to_email, "name": username}],
+            sender={
+                "email": os.getenv("MAIL_FROM"),
+                "name": "FertiSense IoT"
+            },
+            subject="📊 Device Reading Report (Last 24 Hours)",
+            html_content=f"""
+                <p>Hello {username},</p>
+                <p>Please find attached your device reading report for the last 24 hours.</p>
+                <p>Regards,<br>FertiSense IoT System</p>
+            """,
+            attachment=attachment
+        )
+
+        response = api_instance.send_transac_email(email)
+        print("✅ Email sent:", response)
+
+    except ApiException as e:
+        print("❌ Brevo API Error:", e.body)
+    except Exception as e:
+        print("❌ General Email Error:", str(e))
+
+
 
  # ================== Cron  ================== 
 def send_reports_to_all_users():
@@ -372,4 +408,3 @@ if __name__ == "__main__":
 
     print("🔴 Cleanup finished, exiting process")
     sys.exit(0)
-
