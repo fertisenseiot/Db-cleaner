@@ -25,7 +25,7 @@ db_config = {
     "host": "switchyard.proxy.rlwy.net",
     "user": "root",
     "port": 28085,
-    "password": os.getenv("DB_PASSWORD"),
+    "password": "NOtYUNawwodSrBfGubHhwKaFtWyGXQct",
     "database": "railway",
 }
 
@@ -408,3 +408,4 @@ if __name__ == "__main__":
 
     print("🔴 Cleanup finished, exiting process")
     sys.exit(0)
+
