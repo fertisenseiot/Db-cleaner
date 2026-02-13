@@ -14,7 +14,7 @@ import base64
 
 # ========== TEST FILTER ==========
 REPORT_ONLY = True
-TEST_USER_ID = 2   # <-- sirf testing ke liye
+TEST_USER_ID = None
 
 
 # =============== TIMEZONE =============
@@ -408,4 +408,5 @@ if __name__ == "__main__":
 
     print("🔴 Cleanup finished, exiting process")
     sys.exit(0)
+
 
