@@ -14,7 +14,7 @@ import base64
 
 # ========== TEST FILTER ==========
 REPORT_ONLY = True
-TEST_USER_ID = None
+TEST_USER_ID = None   # <-- sirf testing ke liye
 
 
 # =============== TIMEZONE =============
@@ -25,7 +25,7 @@ db_config = {
     "host": "switchyard.proxy.rlwy.net",
     "user": "root",
     "port": 28085,
-    "password": "NOtYUNawwodSrBfGubHhwKaFtWyGXQct",
+    "password": os.getenv("DB_PASSWORD"),
     "database": "railway",
 }
 
@@ -203,81 +203,97 @@ def generate_user_excel(user):
     if not devices:
         return None
 
+    conn = get_connection()
+    cursor = conn.cursor()
+
+    # 🔥 STEP 1 — Check if ANY device has data in last 24h
+    format_strings = ','.join(['%s'] * len(devices))
+
+    check_query = f"""
+        SELECT COUNT(*)
+        FROM device_reading_log
+        WHERE DEVICE_ID IN ({format_strings})
+        AND TIMESTAMP(READING_DATE, READING_TIME)
+            >= DATE_SUB(CURDATE(), INTERVAL 1 DAY)
+        AND TIMESTAMP(READING_DATE, READING_TIME)
+            < CURDATE()
+    """
+
+    cursor.execute(check_query, tuple(devices))
+    total_count = cursor.fetchone()[0]
+
+    if total_count == 0:
+        conn.close()
+        return None   # ❌ No data in any device
+
+    # 🔥 STEP 2 — Now generate Excel (only active devices)
     now = datetime.now(IST)
-    start_time = now - timedelta(hours=24)
 
     filename = (
         f"Reading_Report_{user['ACTUAL_NAME']}_" 
         f"{now.strftime('%Y-%m-%d_%H%M%S')}.xlsx"
     )
 
-    writer = pd.ExcelWriter(filename, engine="openpyxl")
-    conn = get_connection()
+    sheet_created = False
 
-    for device_id in devices:
-        query = """
-            SELECT
-                d.DEVICE_NAME           AS Device,
-                o.ORGANIZATION_NAME     AS Organization,
-                c.CENTRE_NAME           AS Centre,
-                s.SENSOR_NAME           AS Sensor,
-                p.PARAMETER_NAME        AS Parameter,
-                r.READING               AS Reading,
-                r.READING_DATE          AS Date,
-                r.READING_TIME          AS Time
-            FROM device_reading_log r
-            JOIN iot_api_masterdevice d
-                ON d.DEVICE_ID = r.DEVICE_ID
-            JOIN iot_api_masterorganization o
-                ON o.ORGANIZATION_ID = r.ORGANIZATION_ID
-            JOIN iot_api_mastercentre c
-                ON c.CENTRE_ID = r.CENTRE_ID
-            JOIN iot_api_mastersensor s
-                ON s.SENSOR_ID = r.SENSOR_ID
-            JOIN iot_api_masterparameter p
-                ON p.PARAMETER_ID = r.PARAMETER_ID
-            WHERE r.DEVICE_ID = %s
-            AND TIMESTAMP(r.READING_DATE, r.READING_TIME)
-            >= DATE_SUB(CURDATE(), INTERVAL 1 DAY)
-            AND TIMESTAMP(r.READING_DATE, r.READING_TIME) < CURDATE()
-            ORDER BY r.READING_DATE, r.READING_TIME;
+    with pd.ExcelWriter(filename, engine="openpyxl") as writer:
 
+        for device_id in devices:
 
-        """
+            query = """
+                SELECT
+                    d.DEVICE_NAME           AS Device,
+                    o.ORGANIZATION_NAME     AS Organization,
+                    c.CENTRE_NAME           AS Centre,
+                    s.SENSOR_NAME           AS Sensor,
+                    p.PARAMETER_NAME        AS Parameter,
+                    r.READING               AS Reading,
+                    r.READING_DATE          AS Date,
+                    r.READING_TIME          AS Time
+                FROM device_reading_log r
+                JOIN iot_api_masterdevice d
+                    ON d.DEVICE_ID = r.DEVICE_ID
+                JOIN iot_api_masterorganization o
+                    ON o.ORGANIZATION_ID = r.ORGANIZATION_ID
+                JOIN iot_api_mastercentre c
+                    ON c.CENTRE_ID = r.CENTRE_ID
+                JOIN iot_api_mastersensor s
+                    ON s.SENSOR_ID = r.SENSOR_ID
+                JOIN iot_api_masterparameter p
+                    ON p.PARAMETER_ID = r.PARAMETER_ID
+                WHERE r.DEVICE_ID = %s
+                AND TIMESTAMP(r.READING_DATE, r.READING_TIME)
+                    >= DATE_SUB(CURDATE(), INTERVAL 1 DAY)
+                AND TIMESTAMP(r.READING_DATE, r.READING_TIME)
+                    < CURDATE()
+                ORDER BY r.READING_DATE, r.READING_TIME;
+            """
 
-        # df = pd.read_sql(query, conn, params=(device_id, start_time))
-        df = pd.read_sql(query, conn, params=(device_id,))
+            df = pd.read_sql(query, conn, params=(device_id,))
 
+            if df.empty:
+                continue
 
-                    # Date ko readable format me lao
-        df["Date"] = pd.to_datetime(df["Date"]).dt.strftime("%d-%m-%Y")
+            df["Date"] = pd.to_datetime(df["Date"]).dt.strftime("%d-%m-%Y")
+            df["Time"] = pd.to_timedelta(df["Time"]).astype(str).str.split().str[-1]
 
-            # Time ko string bana do (sabse important)
-        # Time se days hata ke sirf HH:MM:SS rakho
-        df["Time"] = pd.to_timedelta(df["Time"]).astype(str).str.split().str[-1]
-
-        # print(df[["Date", "Time"]].head())
-
-
-
-        if not df.empty:
             df.to_excel(
                 writer,
-                sheet_name = str(df["Device"].iloc[0])[:31],
+                sheet_name=str(df["Device"].iloc[0])[:31],
                 index=False
             )
 
-            # 🛑 QUICK SAFETY: agar ek bhi sheet nahi bani
-    if not writer.sheets:
-        writer.close()
-        conn.close()
-        os.remove(filename)
+            sheet_created = True
+
+    conn.close()
+
+    if not sheet_created:
+        if os.path.exists(filename):
+            os.remove(filename)
         return None
 
-
-    writer.close()
-    conn.close()
     return filename
+
 
  # ================== BREVO Mail Sender ================== 
 def send_email_brevo(to_email, username, excel_file):
@@ -408,5 +424,3 @@ if __name__ == "__main__":
 
     print("🔴 Cleanup finished, exiting process")
     sys.exit(0)
-
-
