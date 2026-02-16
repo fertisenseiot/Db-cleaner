@@ -206,6 +206,10 @@ def generate_user_excel(user):
     conn = get_connection()
     cursor = conn.cursor()
 
+    # ✅ Python based exact 24 hours
+    now = datetime.now(IST)
+    start_time = now - timedelta(hours=24)
+
     # 🔥 STEP 1 — Check if ANY device has data in last 24h
     format_strings = ','.join(['%s'] * len(devices))
 
@@ -214,12 +218,14 @@ def generate_user_excel(user):
         FROM device_reading_log
         WHERE DEVICE_ID IN ({format_strings})
         AND TIMESTAMP(READING_DATE, READING_TIME)
-            >= DATE_SUB(CURDATE(), INTERVAL 1 DAY)
-        AND TIMESTAMP(READING_DATE, READING_TIME)
-            < CURDATE()
+            BETWEEN %s AND %s
     """
 
-    cursor.execute(check_query, tuple(devices))
+    cursor.execute(
+        check_query,
+        tuple(devices) + (start_time, now)
+    )
+
     total_count = cursor.fetchone()[0]
 
     if total_count == 0:
@@ -227,7 +233,6 @@ def generate_user_excel(user):
         return None   # ❌ No data in any device
 
     # 🔥 STEP 2 — Now generate Excel (only active devices)
-    now = datetime.now(IST)
 
     filename = (
         f"Reading_Report_{user['ACTUAL_NAME']}_" 
@@ -263,13 +268,15 @@ def generate_user_excel(user):
                     ON p.PARAMETER_ID = r.PARAMETER_ID
                 WHERE r.DEVICE_ID = %s
                 AND TIMESTAMP(r.READING_DATE, r.READING_TIME)
-                    >= DATE_SUB(CURDATE(), INTERVAL 1 DAY)
-                AND TIMESTAMP(r.READING_DATE, r.READING_TIME)
-                    < CURDATE()
+                    BETWEEN %s AND %s
                 ORDER BY r.READING_DATE, r.READING_TIME;
             """
 
-            df = pd.read_sql(query, conn, params=(device_id,))
+            df = pd.read_sql(
+                query,
+                conn,
+                params=(device_id, start_time, now)
+            )
 
             if df.empty:
                 continue
@@ -293,6 +300,7 @@ def generate_user_excel(user):
         return None
 
     return filename
+
 
 
  # ================== BREVO Mail Sender ================== 
