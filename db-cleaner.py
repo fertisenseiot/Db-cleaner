@@ -206,11 +206,33 @@ def generate_user_excel(user):
     conn = get_connection()
     cursor = conn.cursor()
 
-    # ✅ Python based exact 24 hours
-    now = datetime.now(IST)
-    start_time = now - timedelta(hours=24)
+    # =========================
+    # 🔥 PREVIOUS FULL DAY LOGIC
+    # =========================
 
-    # 🔥 STEP 1 — Check if ANY device has data in last 24h
+    now = datetime.now(IST)
+
+    # Yesterday ki date
+    report_date = (now - timedelta(days=1)).date()
+
+    # 00:00:00 of yesterday
+    start_time = IST.localize(
+        datetime.combine(report_date, datetime.min.time())
+    )
+
+    # 23:59:59 of yesterday
+    end_time = IST.localize(
+        datetime.combine(report_date, datetime.max.time())
+    )
+
+    print("📅 Report Date:", report_date)
+    print("🕒 Start:", start_time)
+    print("🕒 End:", end_time)
+
+    # =========================
+    # 🔍 STEP 1 — Check if ANY device has data
+    # =========================
+
     format_strings = ','.join(['%s'] * len(devices))
 
     check_query = f"""
@@ -223,20 +245,21 @@ def generate_user_excel(user):
 
     cursor.execute(
         check_query,
-        tuple(devices) + (start_time, now)
+        tuple(devices) + (start_time, end_time)
     )
 
     total_count = cursor.fetchone()[0]
 
     if total_count == 0:
         conn.close()
-        return None   # ❌ No data in any device
+        return None   # ❌ No data for that day
 
-    # 🔥 STEP 2 — Now generate Excel (only active devices)
+    # =========================
+    # 📄 Excel Generation
+    # =========================
 
     filename = (
-        f"Reading_Report_{user['ACTUAL_NAME']}_" 
-        f"{now.strftime('%Y-%m-%d_%H%M%S')}.xlsx"
+        f"Reading_Report_{user['ACTUAL_NAME']}_{report_date}.xlsx"
     )
 
     sheet_created = False
@@ -275,7 +298,7 @@ def generate_user_excel(user):
             df = pd.read_sql(
                 query,
                 conn,
-                params=(device_id, start_time, now)
+                params=(device_id, start_time, end_time)
             )
 
             if df.empty:
