@@ -42,7 +42,7 @@ def get_connection():
 # ================== CLEANUP LOGIC ==================
 def clean_old_readings():
     """
-    Deletes all readings older than 3 days from device_reading_log.
+    Deletes all readings older than 10 days from device_reading_log.
     """
     print("🧹 Starting cleanup process...")
     try:
@@ -50,7 +50,7 @@ def clean_old_readings():
         cursor = conn.cursor(dictionary=True)
         
         
-        cutoff_date = datetime.now(IST) - timedelta(days=3)
+        cutoff_date = datetime.now(IST) - timedelta(days=10)
         print("📅 Deleting records older than:", cutoff_date.strftime("%Y-%m-%d %H:%M:%S"))
 
         cursor.execute("""
@@ -66,7 +66,7 @@ def clean_old_readings():
                 WHERE TIMESTAMP(READING_DATE, READING_TIME) < %s
             """, (cutoff_date,))
             conn.commit()
-            print(f"✅ Deleted {count} old readings (older than 3 days)")
+            print(f"✅ Deleted {count} old readings (older than 10 days)")
         else:
             print("✅ No old readings found to delete.")
 
@@ -432,4 +432,5 @@ if __name__ == "__main__":
 
     print("🔴 Cleanup finished, exiting process")
     sys.exit(0)
+
 
