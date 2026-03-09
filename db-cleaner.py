@@ -9,6 +9,8 @@ import pytz
 import sib_api_v3_sdk
 from sib_api_v3_sdk.rest import ApiException
 import base64
+import warnings
+warnings.filterwarnings("ignore", category=UserWarning)
 
 
 
@@ -86,7 +88,7 @@ def start_cleanup_scheduler():
     """
     def scheduler():
         while True:
-            # clean_old_readings()
+            clean_old_readings()
             print("⏳ Next cleanup in 24 hours...")
             time.sleep(24 * 60 * 60)
 
@@ -225,9 +227,7 @@ def generate_user_excel(user):
         datetime.combine(report_date, datetime.max.time())
     )
 
-    print("📅 Report Date:", report_date)
-    print("🕒 Start:", start_time)
-    print("🕒 End:", end_time)
+    print("📄 Generating report...")
 
     # =========================
     # 🔍 STEP 1 — Check if ANY device has data
@@ -295,26 +295,28 @@ def generate_user_excel(user):
                 ORDER BY r.READING_DATE, r.READING_TIME;
             """
 
-            df = pd.read_sql(
+            df_chunks = pd.read_sql(
                 query,
                 conn,
-                params=(device_id, start_time, end_time)
+                params=(device_id, start_time, end_time),
+                chunksize=5000
             )
 
-            if df.empty:
-                continue
+            for df in df_chunks:
 
-            df["Date"] = pd.to_datetime(df["Date"]).dt.strftime("%d-%m-%Y")
-            df["Time"] = pd.to_timedelta(df["Time"]).astype(str).str.split().str[-1]
+                if df.empty:
+                    continue
 
-            df.to_excel(
-                writer,
-                sheet_name=str(df["Device"].iloc[0])[:31],
-                index=False
-            )
+                df["Date"] = pd.to_datetime(df["Date"]).dt.strftime("%d-%m-%Y")
+                df["Time"] = pd.to_timedelta(df["Time"]).astype(str).str.split().str[-1]
 
-            sheet_created = True
+                df.to_excel(
+                    writer,
+                    sheet_name=str(df["Device"].iloc[0])[:31],
+                    index=False
+                )
 
+                sheet_created = True
     conn.close()
 
     if not sheet_created:
@@ -424,7 +426,7 @@ def send_reports_to_all_users():
                 sent_tm=now_dt.time().replace(microsecond=0)
             )
 
-            # os.remove(excel)
+            os.remove(excel)
 
         else:
             # ❌ FAIL LOG (no data / excel nahi bana)
@@ -455,5 +457,4 @@ if __name__ == "__main__":
 
     print("🔴 Cleanup finished, exiting process")
     sys.exit(0)
-
 
