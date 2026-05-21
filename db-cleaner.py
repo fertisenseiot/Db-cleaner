@@ -341,7 +341,7 @@ def send_email_brevo(to_email, username, excel_file):
 
     if not BREVO_API_KEY:
         print("❌ BREVO_API_KEY not found in environment variables!")
-        return
+        return False
 
     try:
         import sib_api_v3_sdk
@@ -381,11 +381,61 @@ def send_email_brevo(to_email, username, excel_file):
 
         response = api_instance.send_transac_email(email)
         print("✅ Email sent:", response)
+        
+        return True
 
     except ApiException as e:
         print("❌ Brevo API Error:", e.body)
+        return False
     except Exception as e:
+
         print("❌ General Email Error:", str(e))
+
+        # ================= ADMIN ALERT =================
+        try:
+
+            configuration = sib_api_v3_sdk.Configuration()
+            configuration.api_key['api-key'] = BREVO_API_KEY
+
+            api_instance = sib_api_v3_sdk.TransactionalEmailsApi(
+                sib_api_v3_sdk.ApiClient(configuration)
+            )
+
+            admin_email = sib_api_v3_sdk.SendSmtpEmail(
+
+                to=[{
+                    "email": "fertisenseiot@gmail.com",
+                    "name": "FertiSense Admin"
+                }],
+
+                sender={
+                    "email": os.getenv("MAIL_FROM"),
+                    "name": "FertiSense IoT"
+                },
+
+                subject="🚨 FertiSense Email Failure Alert",
+
+                html_content=f"""
+                    <h3>Email Sending Failed</h3>
+
+                    <p><b>User:</b> {username}</p>
+
+                    <p><b>Target Email:</b> {to_email}</p>
+
+                    <p><b>Error:</b><br>{str(e)}</p>
+
+                    <p><b>Time:</b> {datetime.now(IST)}</p>
+                """
+            )
+
+            api_instance.send_transac_email(admin_email)
+
+            print("📨 Admin alert sent")
+
+        except Exception as admin_err:
+            print("❌ Admin alert failed:", str(admin_err))
+
+        return False
 
 
 
@@ -409,19 +459,42 @@ def send_reports_to_all_users():
 
               # 🔥 MULTIPLE EMAIL SUPPORT (YAHI ADD KIYA HAI)
             emails = [e.strip() for e in user["EMAIL"].split(",") if e.strip()]
-
+            
+            all_sent = True
+             
             for email in emails:
-                send_email_brevo(
+
+                sent = send_email_brevo(
                     to_email=email,
                     username=user["ACTUAL_NAME"],
                     excel_file=excel
                 )
 
+                if not sent:
+
+                    all_sent = False
+
+                    conn = get_connection()
+                    cursor = conn.cursor()
+
+                    cursor.execute("""
+                        INSERT INTO failed_email_queue
+                        (user_id, email, error_message)
+                        VALUES (%s, %s, %s)
+                    """, (
+                        user["USER_ID"],
+                        email,
+                        "Email sending failed"
+                    ))
+
+                    conn.commit()
+                    conn.close()
+
             # ✅ SUCCESS LOG
             log_email_report(
                 user_id=user["USER_ID"],
                 record_selection_date=record_selection_date,
-                sent_status=True,
+                sent_status=all_sent,
                 sent_dt=now_dt.date(),
                 sent_tm=now_dt.time().replace(microsecond=0)
             )
@@ -457,5 +530,4 @@ if __name__ == "__main__":
 
     print("🔴 Cleanup finished, exiting process")
     sys.exit(0)
-
 
