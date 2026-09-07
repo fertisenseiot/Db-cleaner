@@ -258,9 +258,12 @@ def generate_user_excel(user):
     # 📄 Excel Generation
     # =========================
 
-    filename = (
-        f"Reading_Report_{user['ACTUAL_NAME']}_{report_date}.xlsx"
-    )
+    safe_name = "".join(
+        c if c.isalnum() or c in (' ', '_', '-') else '_' 
+        for c in user['ACTUAL_NAME']
+    ).strip()
+
+    filename = f"Reading_Report_{safe_name}_{report_date}.xlsx"
 
     sheet_created = False
 
