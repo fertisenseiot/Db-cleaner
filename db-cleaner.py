@@ -141,6 +141,7 @@ def get_active_users():
         FROM master_user
         WHERE SEND_EMAIL = 1
           AND EMAIL IS NOT NULL
+          AND ROLE_ID IN (2, 3)
     """
 
     params = []
