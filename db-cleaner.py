@@ -483,8 +483,8 @@ def send_reports_to_all_users():
 
                     cursor.execute("""
                         INSERT INTO failed_email_queue
-                        (user_id, email, error_message, RETRY_COUNT, created_at)
-                        VALUES (%s, %s, %s, %s)
+                        (USER_ID, email, ERROR_MESSAGE, RETRY_COUNT, created_at)
+                        VALUES (%s, %s, %s, %s, %s)
                     """, (
                         user["USER_ID"],
                         email,
