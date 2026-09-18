@@ -483,12 +483,13 @@ def send_reports_to_all_users():
 
                     cursor.execute("""
                         INSERT INTO failed_email_queue
-                        (user_id, email, error_message)
-                        VALUES (%s, %s, %s)
+                        (user_id, email, error_message, RETRY_COUNT)
+                        VALUES (%s, %s, %s, %s)
                     """, (
                         user["USER_ID"],
                         email,
-                        "Email sending failed"
+                        "Email sending failed (Brevo API Error)",
+                        0
                     ))
 
                     conn.commit()
